@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>错题收集系统</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+            margin: 0;
+            padding: 10px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            transition: opacity 0.3s;
+        }
+        .btn:active {
+            opacity: 0.8;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .question-box {
+            margin: 10px 0;
+            display: flex;
+            gap: 10px;
+        }
+        .progress {
+            height: 20px;
+            background: #eee;
+            margin: 10px 0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #28a745;
+            transition: width 0.3s;
+        }
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            flex-wrap: wrap;
+        }
+        .status-item {
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 5px;
+            margin: 5px;
+            flex: 1 1 150px;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-content {
+            background: white;
+            padding: 20px;
+            width: 90%;
+            max-width: 400px;
+            border-radius: 10px;
+        }
+        .form-title {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .delete-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <!-- 入口页面 -->
+    <div id="entry" class="container">
+        <h1 class="form-title" id="title">***错题收集</h1>
+        <button class="btn" onclick="enterStudent()">学生端</button>
+        <button class="btn" onclick="showPasswordModal()">教师端</button>
+    </div>
+
+    <!-- 教师端界面 -->
+    <div id="teacher" style="display:none;" class="container">
+        <h2 class="form-title">教师端管理</h2>
+        <button class="btn" id="toggleBtn" onclick="toggleCollection()">停止收集</button>
+        
+        <div class="status-bar" id="classStatus"></div>
+        
+        <button class="btn" onclick="importStudents()">导入学生信息</button>
+        <button class="btn" onclick="publishCollection()">发布新收集</button>
+        <button class="btn" onclick="exportData()">下载数据</button>
+        
+        <div id="importProgress" style="display:none; margin-top:20px;">
+            <div class="progress">
+                <div class="progress-bar" style="width:0%"></div>
+            </div>
+            <div id="uploadCount" style="text-align:center; margin:5px 0;"></div>
+        </div>
+    </div>
+
+    <!-- 学生端界面 -->
+    <div id="student" style="display:none;" class="container">
+        <h2 class="form-title">错题提交</h2>
+        <div class="status-bar" id="submitStatus"></div>
+        
+        <form onsubmit="return submitForm(event)">
+            <select id="classSelect" required>
+                <option value="">请选择班级</option>
+            </select>
+            
+            <input type="text" id="nameInput" placeholder="请输入姓名" required>
+            <input type="text" id="idInput" placeholder="身份证后6位（X不区分大小写）" 
+                  pattern="[0-9Xx]{6}" maxlength="6" required>
+            
+            <div id="questionContainer">
+                <div class="question-box">
+                    <input type="number" min="1" max="9999" placeholder="错题编码（1-9999）" required>
+                    <button type="button" class="delete-btn" onclick="deleteQuestionBox(this)">删除</button>
+                </div>
+                <script>
+                    // 初始化5个输入框
+                    for(let i=0;i<4;i++) addQuestionBox();
+                </script>
+            </div>
+            
+            <button type="button" class="btn" onclick="addQuestionBox()">新增错题框</button>
+            <button type="submit" class="btn" style="background:#28a745;">提交</button>
+        </form>
+    </div>
+
+    <!-- 密码模态框 -->
+    <div class="modal" id="passwordModal">
+        <div class="modal-content">
+            <h3>教师身份验证</h3>
+            <input type="password" id="passwordInput" placeholder="请输入教师密码">
+            <div style="display:flex; gap:10px; margin-top:15px;">
+                <button class="btn" onclick="enterTeacher()">确认</button>
+                <button class="btn" style="background:#dc3545;" onclick="hideModal()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 系统数据存储
+        let appData = {
+            title: "默认标题",
+            students: [],
+            submissions: {},
+            collectionActive: true,
+            teacherPassword: "zp801212" // 明文存储密码
+        };
+
+        // 初始化系统
+        function init() {
+            if(localStorage.appData) {
+                const saved = JSON.parse(localStorage.appData);
+                appData = {...appData, ...saved};
+                document.getElementById('title').textContent = appData.title;
+                updateClassStatus();
+                initClassSelect();
+                updateToggleButton();
+            }
+        }
+
+        // 进入学生端
+        function enterStudent() {
+            document.getElementById('entry').style.display = 'none';
+            document.getElementById('student').style.display = 'block';
+            initClassSelect();
+            updateClassStatus();
+        }
+
+        // 显示密码模态框
+        function showPasswordModal() {
+            document.getElementById('passwordInput').value = '';
+            document.getElementById('passwordModal').style.display = 'flex';
+        }
+
+        // 隐藏模态框
+        function hideModal() {
+            document.getElementById('passwordModal').style.display = 'none';
+        }
+
+        // 教师端密码验证（简化版）
+        function enterTeacher() {
+            const inputPassword = document.getElementById('passwordInput').value;
+            if(inputPassword === appData.teacherPassword) {
+                document.getElementById('entry').style.display = 'none';
+                document.getElementById('teacher').style.display = 'block';
+                hideModal();
+                updateClassStatus();
+            } else {
+                alert('密码错误，请重试！');
+            }
+        }
+
+        // 导入学生信息
+        function importStudents() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.xlsx,.xls';
+            input.onchange = async e => {
+                if(!confirm('是否保留原有学生信息？')) {
+                    appData.students = [];
+                }
+                
+                const file = e.target.files[0];
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const wb = XLSX.read(e.target.result, {type: 'array'});
+                    const ws = wb.Sheets[wb.SheetNames[0]];
+                    const data = XLSX.utils.sheet_to_json(ws, {header:1});
+                    
+                    document.getElementById('importProgress').style.display = 'block';
+                    let successCount = 0;
+                    
+                    for(let i=1; i<data.length; i++){
+                        const [cls, name, id] = data[i];
+                        if(!cls || !name || !id) continue;
+                        
+                        const existingIndex = appData.students.findIndex(s => 
+                            s.class === cls && s.name === name
+                        );
+                        
+                        if(existingIndex === -1) {
+                            appData.students.push({
+                                class: cls,
+                                name: name,
+                                id: id.toString().toUpperCase()
+                            });
+                            successCount++;
+                        }
+                        
+                        // 更新进度
+                        const progress = (i/data.length*100).toFixed(1);
+                        document.querySelector('#importProgress .progress-bar').style.width = progress+'%';
+                        document.getElementById('uploadCount').textContent = 
+                            `已处理 ${i}/${data.length} 条，有效数据 ${successCount} 条`;
+                    }
+                    
+                    saveData();
+                    initClassSelect();
+                    updateClassStatus();
+                    document.getElementById('importProgress').style.display = 'none';
+                    alert(`导入完成！共处理 ${data.length-1} 条数据，有效数据 ${successCount} 条`);
+                };
+                reader.readAsArrayBuffer(file);
+            };
+            input.click();
+        }
+
+        // 学生提交表单
+        function submitForm(e) {
+            e.preventDefault();
+            if(!appData.collectionActive) return alert("收集已结束，请联系老师");
+            
+            const cls = document.getElementById('classSelect').value;
+            const name = document.getElementById('nameInput').value.trim();
+            const id = document.getElementById('idInput').value.toUpperCase();
+            const codes = Array.from(document.querySelectorAll('#questionContainer input[type="number"]'))
+                          .map(i => i.value).filter(v => v);
+            
+            // 验证学生信息
+            const valid = appData.students.some(s => 
+                s.class === cls && 
+                s.name === name && 
+                s.id === id
+            );
+            
+            if(!valid) return alert("姓名或身份证号码后6位错误，请核查");
+            
+            // 检查是否已提交
+            const studentId = `${cls}-${name}-${id}`;
+            if(appData.submissions[studentId]) {
+                if(!confirm("已提交过，是否修改？")) return;
+            }
+            
+            appData.submissions[studentId] = codes;
+            saveData();
+            updateClassStatus();
+            alert("提交成功！");
+            return false;
+        }
+
+        // 导出数据
+        function exportData() {
+            const wb = XLSX.utils.book_new();
+            const classes = [...new Set(appData.students.map(s => s.class))];
+            
+            classes.forEach(cls => {
+                const data = [["姓名", "错题编码"]];
+                appData.students.filter(s => s.class === cls).forEach(s => {
+                    const id = `${s.class}-${s.name}-${s.id}`;
+                    (appData.submissions[id] || []).forEach(code => {
+                        data.push([s.name, code]);
+                    });
+                });
+                const ws = XLSX.utils.aoa_to_sheet(data);
+                XLSX.utils.book_append_sheet(wb, ws, appData.title + cls);
+            });
+            
+            XLSX.writeFile(wb, `${appData.title}.xlsx`);
+        }
+
+        // 其他功能函数
+        function addQuestionBox() {
+            const container = document.getElementById('questionContainer');
+            const newBox = document.createElement('div');
+            newBox.className = 'question-box';
+            newBox.innerHTML = `
+                <input type="number" min="1" max="9999" placeholder="错题编码（1-9999）" required>
+                <button type="button" class="delete-btn" onclick="deleteQuestionBox(this)">删除</button>
+            `;
+            container.appendChild(newBox);
+        }
+
+        function deleteQuestionBox(button) {
+            const questionBox = button.parentNode;
+            const container = document.getElementById('questionContainer');
+            if (container.children.length > 1) {
+                container.removeChild(questionBox);
+            } else {
+                alert('至少保留一个错题编码输入框');
+            }
+        }
+
+        function updateClassStatus() {
+            const classes = [...new Set(appData.students.map(s => s.class))];
+            let html = '';
+            
+            classes.forEach(cls => {
+                const students = appData.students.filter(s => s.class === cls);
+                const submitted = students.filter(s => 
+                    appData.submissions[`${s.class}-${s.name}-${s.id}`]
+                ).length;
+                
+                html += `
+                    <div class="status-item" onclick="showUnsubmitted('${cls}')">
+                        <strong>${cls}</strong><br>
+                        ✅ 已提交：${submitted}<br>
+                        ❌ 未提交：${students.length - submitted}
+                    </div>`;
+            });
+            
+            document.getElementById('classStatus').innerHTML = html;
+            document.getElementById('submitStatus').innerHTML = html;
+        }
+
+        function showUnsubmitted(className) {
+            const students = appData.students.filter(s => s.class === className);
+            const unsubmitted = students.filter(s => 
+                !appData.submissions[`${s.class}-${s.name}-${s.id}`]
+            );
+            
+            const list = unsubmitted.map(s => `• ${s.name}`).join('\n');
+            alert(`${className} 未提交名单：\n${list}`);
+        }
+
+        function initClassSelect() {
+            const select = document.getElementById('classSelect');
+            select.innerHTML = '<option value="">请选择班级</option>';
+            const classes = [...new Set(appData.students.map(s => s.class))];
+            classes.forEach(c => {
+                select.innerHTML += `<option value="${c}">${c}</option>`;
+            });
+        }
+
+        function publishCollection() {
+            const newTitle = prompt('请输入新收集标题：', appData.title);
+            if(newTitle) {
+                appData.title = newTitle;
+                appData.submissions = {};
+                document.getElementById('title').textContent = newTitle;
+                saveData();
+                alert('新收集已发布！历史数据已清空');
+            }
+        }
+
+        function toggleCollection() {
+            appData.collectionActive = !appData.collectionActive;
+            saveData();
+            alert(`收集状态已${appData.collectionActive ? '开启' : '关闭'}`);
+            updateToggleButton();
+        }
+
+        function updateToggleButton() {
+            const btn = document.getElementById('toggleBtn');
+            btn.textContent = appData.collectionActive ? '停止收集' : '开始收集';
+            btn.style.backgroundColor = appData.collectionActive ? '#dc3545' : '#28a745';
+        }
+
+        function saveData() {
+            localStorage.appData = JSON.stringify(appData);
+        }
+
+        // 初始化系统
+        window.onload = init;
+    </script>
+</body>
+</html>
+    
